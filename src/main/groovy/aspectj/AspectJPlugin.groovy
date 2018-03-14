@@ -9,6 +9,10 @@ import org.gradle.api.logging.LogLevel
 import org.gradle.api.plugins.JavaPlugin
 import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.file.SourceDirectorySet;
+import org.gradle.api.internal.file.SourceDirectorySetFactory;
+import org.gradle.api.internal.plugins.DslObject;
+import javax.inject.Inject;
 
 /**
  *
@@ -16,6 +20,13 @@ import org.gradle.api.tasks.TaskAction
  * @author Mike Noordermeer
  */
 class AspectJPlugin implements Plugin<Project> {
+    public static final String ASPECTJ_CONFIGURATION_NAME = "aspectj";
+    def SourceDirectorySetFactory sourceDirectorySetFactory;
+
+    @Inject
+    AspectJPlugin(SourceDirectorySetFactory sourceDirectorySetFactory) {
+        this.sourceDirectorySetFactory = sourceDirectorySetFactory;
+    }
 
     void apply(Project project) {
         project.plugins.apply(JavaPlugin)
@@ -35,7 +46,7 @@ class AspectJPlugin implements Plugin<Project> {
                 }
             }
         }
-
+        
         for (projectSourceSet in project.sourceSets) {
             def namingConventions = projectSourceSet.name.equals('main') ? new MainNamingConventions() : new DefaultNamingConventions();
             for (configuration in [namingConventions.getAspectPathConfigurationName(projectSourceSet), namingConventions.getAspectInpathConfigurationName(projectSourceSet)]) {
@@ -43,33 +54,57 @@ class AspectJPlugin implements Plugin<Project> {
                     project.configurations.create(configuration)
                 }
             }
+            // for each source set we will:
+            // Add a new 'aspectj' virtual directory mapping
+            def AspectJSourceDirPluginConvention aspectjDirectoryDelegate = new AspectJSourceDirPluginConvention(projectSourceSet.displayName, sourceDirectorySetFactory);
+            new DslObject(projectSourceSet).convention.plugins.put(
+                AspectJSourceDirPluginConvention.NAME, aspectjDirectoryDelegate);
+            def srcDir = "src/"+ projectSourceSet.name +"/aspectj";
+            aspectjDirectoryDelegate.aspectj.srcDir(srcDir);
+            projectSourceSet.allSource.source(aspectjDirectoryDelegate.aspectj);
 
-            if (!projectSourceSet.allJava.isEmpty()) {
-                def aspectTaskName = namingConventions.getAspectCompileTaskName(projectSourceSet)
-                def javaTaskName = namingConventions.getJavaCompileTaskName(projectSourceSet)
-
-                project.tasks.create(name: aspectTaskName, overwrite: true, description: "Compiles AspectJ Source for ${projectSourceSet.name} source set", type: Ajc) {
-                    sourceSet = projectSourceSet
-                    inputs.files(sourceSet.allJava)
-                    outputs.dir(sourceSet.java.outputDir)
-                    aspectpath = project.configurations.findByName(namingConventions.getAspectPathConfigurationName(projectSourceSet))
-                    ajInpath = project.configurations.findByName(namingConventions.getAspectInpathConfigurationName(projectSourceSet))
-                }
-
-                project.tasks[aspectTaskName].setDependsOn(project.tasks[javaTaskName].dependsOn)
-                project.tasks[aspectTaskName].dependsOn(project.tasks[aspectTaskName].aspectpath)
-                project.tasks[aspectTaskName].dependsOn(project.tasks[aspectTaskName].ajInpath)
-                project.tasks[javaTaskName].deleteAllActions()
-                project.tasks[javaTaskName].dependsOn(project.tasks[aspectTaskName])
+            // create an AspectjTask for this sourceSet following the gradle
+            // naming conventions via call to sourceSet.getTaskName()
+            // Set up the Aspectj output directory (adding to javac inputs!)
+            def outputDirectory = project.buildDir.toPath()
+            .resolve("generated")
+            .resolve("aspectj")
+            .resolve(projectSourceSet.name).toFile();
+ 
+            aspectjDirectoryDelegate.aspectj.outputDir = outputDirectory;
+            
+            def aspectTaskName = namingConventions.getAspectCompileTaskName(projectSourceSet)
+            def classesTaskName = namingConventions.getClassesTaskName(projectSourceSet)
+            
+            project.tasks.create(name: aspectTaskName, overwrite: true, description: "Compiles AspectJ Source for ${projectSourceSet.name} source set", type: Ajc) {
+                sourceSet = projectSourceSet
+                inputs.files(sourceSet.aspectj)
+                outputs.dir(sourceSet.aspectj.outputDir)
+                aspectpath = project.configurations.findByName(namingConventions.getAspectPathConfigurationName(projectSourceSet))
+                ajInpath = project.configurations.findByName(namingConventions.getAspectInpathConfigurationName(projectSourceSet))
             }
+
+            // Add out directory as first item to runtimeClasspath
+            // TODO: Investigate and confirm that the new folder add will always overwrite existing directory if there are duplicates
+            // 1) Internet search did provide clear answer
+            // 2) Gradle source shows the use of LinkedHashSet that should preserve order
+            // *) Ask on gradle forums
+            
+            project.sourceSets."${projectSourceSet.name}".output.dir outputDirectory          
+            
+            // register fact that aspectj should be run before compiling
+            project.tasks[aspectTaskName].setDependsOn(project.tasks[classesTaskName].dependsOn)
+            project.tasks[aspectTaskName].dependsOn(project.tasks[aspectTaskName].aspectpath)
+            project.tasks[aspectTaskName].dependsOn(project.tasks[aspectTaskName].ajInpath)
+            project.tasks[classesTaskName].dependsOn(project.tasks[aspectTaskName])
         }
     }
 
     private static class MainNamingConventions implements NamingConventions {
 
         @Override
-        String getJavaCompileTaskName(final SourceSet sourceSet) {
-            return "compileJava"
+        String getClassesTaskName(final SourceSet sourceSet) {
+            return "classes"
         }
 
         @Override
@@ -86,13 +121,23 @@ class AspectJPlugin implements Plugin<Project> {
         String getAspectInpathConfigurationName(final SourceSet sourceSet) {
             return "ajInpath"
         }
+        
+        @Override
+        String getRuntimeConfigurationName(SourceSet sourceSet){
+            return "runtime"
+        }
+        
+        @Override
+        String getArchivePrefix(SourceSet sourceSet){
+            return "aspectj"
+        }
     }
 
     private static class DefaultNamingConventions implements NamingConventions {
 
         @Override
-        String getJavaCompileTaskName(final SourceSet sourceSet) {
-            return "compile${sourceSet.name.capitalize()}Java"
+        String getClassesTaskName(final SourceSet sourceSet) {
+            return "${sourceSet.name}Classes"
         }
 
         @Override
@@ -108,6 +153,16 @@ class AspectJPlugin implements Plugin<Project> {
         @Override
         String getAspectInpathConfigurationName(final SourceSet sourceSet) {
             return "${sourceSet.name}AjInpath"
+        }
+        
+        @Override
+        String getRuntimeConfigurationName(SourceSet sourceSet){
+            return "${sourceSet.name}Runtime"
+        }
+        
+        @Override
+        String getArchivePrefix(SourceSet sourceSet){
+            return "${sourceSet.name}-aspectj"
         }
     }
 }
@@ -131,40 +186,43 @@ class Ajc extends DefaultTask {
 
     @TaskAction
     def compile() {
-        logger.info("=" * 30)
-        logger.info("=" * 30)
-        logger.info("Running ajc ...")
-        logger.info("classpath: ${sourceSet.compileClasspath.asPath}")
-        logger.info("srcDirs $sourceSet.java.srcDirs")
+        if(sourceSet.aspectj.srcDirs.any({it.exists()})) {
+            logger.info("=" * 30)
+            logger.info("=" * 30)
+            logger.info("Running ajc ...")
+            logger.info("classpath: ${sourceSet.compileClasspath.asPath}")
+            logger.info("srcDirs $sourceSet.aspectj.srcDirs")
+        
+            def iajcArgs = [
+                classpath           : sourceSet.compileClasspath.asPath,
+                destDir             : sourceSet.aspectj.outputDir.absolutePath,
+                s                   : sourceSet.aspectj.outputDir.absolutePath,
+                source              : project.convention.plugins.java.sourceCompatibility,
+                target              : project.convention.plugins.java.targetCompatibility,
+                inpath              : (ajInpath + sourceSet.output).asPath,
+                xlint               : xlint,
+                fork                : 'true',
+                aspectPath          : aspectpath.asPath,
+                sourceRootCopyFilter: '**/*.java,**/*.aj',
+                showWeaveInfo       : 'true']
 
-        def iajcArgs = [classpath           : sourceSet.compileClasspath.asPath,
-                        destDir             : sourceSet.java.outputDir.absolutePath,
-                        s                   : sourceSet.java.outputDir.absolutePath,
-                        source              : project.convention.plugins.java.sourceCompatibility,
-                        target              : project.convention.plugins.java.targetCompatibility,
-                        inpath              : ajInpath.asPath,
-                        xlint               : xlint,
-                        fork                : 'true',
-                        aspectPath          : aspectpath.asPath,
-                        sourceRootCopyFilter: '**/*.java,**/*.aj',
-                        showWeaveInfo       : 'true']
-
-        if (null != maxmem) {
-            iajcArgs['maxmem'] = maxmem
-        }
-
-        if (null != additionalAjcArgs) {
-            for (pair in additionalAjcArgs) {
-                iajcArgs[pair.key] = pair.value
+            if (null != maxmem) {
+                iajcArgs['maxmem'] = maxmem
             }
-        }
 
-        ant.taskdef(resource: "org/aspectj/tools/ant/taskdefs/aspectjTaskdefs.properties", classpath: project.configurations.ajtools.asPath)
-        ant.iajc(iajcArgs) {
-            sourceRoots {
-                sourceSet.java.srcDirs.each {
-                    logger.info("   sourceRoot $it")
-                    pathelement(location: it.absolutePath)
+            if (null != additionalAjcArgs) {
+                for (pair in additionalAjcArgs) {
+                    iajcArgs[pair.key] = pair.value
+                }
+            }
+
+            ant.taskdef(resource: "org/aspectj/tools/ant/taskdefs/aspectjTaskdefs.properties", classpath: project.configurations.ajtools.asPath)
+            ant.iajc(iajcArgs) {
+                sourceRoots {
+                    sourceSet.aspectj.srcDirs.each {
+                        logger.info("   sourceRoot $it")
+                        pathelement(location: it.absolutePath)
+                    }
                 }
             }
         }
@@ -177,5 +235,23 @@ class AspectJExtension {
 
     AspectJExtension(Project project) {
         this.version = project.findProperty('aspectjVersion') ?: '1.8.12'
+    }
+}
+
+class AspectJSourceDirPluginConvention {
+    
+    public static final NAME = "aspectj"
+    
+    SourceDirectorySet aspectj
+  
+    AspectJSourceDirPluginConvention(String parentDisplayName, SourceDirectorySetFactory sourceDirectorySetFactory) {
+        def displayName = parentDisplayName + " Aspectj source";
+        aspectj = sourceDirectorySetFactory.create(displayName);
+        aspectj.filter.include("**/*.aj");
+    }
+
+    def aspectj(Closure closure) {
+        closure.delegate = this
+        closure()
     }
 }
