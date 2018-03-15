@@ -85,12 +85,16 @@ class AspectJPlugin implements Plugin<Project> {
             }
 
             // Add out directory as first item to runtimeClasspath
-            // TODO: Investigate and confirm that the new folder add will always overwrite existing directory if there are duplicates
+            // TODO: Investigate and confirm that the new folder will always overwrite 
+            //       existing directory if there are duplicates when creating jar file
             // 1) Internet search did provide clear answer
-            // 2) Gradle source shows the use of LinkedHashSet that should preserve order
+            // 2) Looked at gradle source files. Use of LinkedHashSet should preserve order
             // *) Ask on gradle forums
             
-            project.sourceSets."${projectSourceSet.name}".output.dir outputDirectory          
+            project.sourceSets."${projectSourceSet.name}".output.dir outputDirectory
+            
+            // Ensure that the aspectj output is first on classpath
+            projectSourceSet.runtimeClasspath =  project.files(outputDirectory) + projectSourceSet.runtimeClasspath        
             
             // register fact that aspectj should be run before compiling
             project.tasks[aspectTaskName].setDependsOn(project.tasks[classesTaskName].dependsOn)
