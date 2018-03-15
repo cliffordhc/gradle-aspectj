@@ -1,6 +1,33 @@
 Gradle AspectJ plugin
 =====================
 
+Introduction
+------------
+
+This is a fork of eveoh/gradle-aspectj repository which has been archived.
+
+Made changes to the way the plugin works to avoid issues with compiling source with Lombok annotations.
+
+The plugin now weaves compiled sources which are automatically added to inPath.
+
+The aspectj source files can be placed in a virtual directory similar to the [antlr plugin](gradle/subprojects/antlr/src/main/java/org/gradle/api/plugins/antlr/AntlrPlugin.java).
+
+The plugin created a aspectj virtual directory for all sourceSets.
+
+Files in the virtual directory are added to sourceRoots.
+
+For example:
+
+```groovy
+sourceSets {
+  main {
+    aspectj
+  }
+}
+```
+
+default input directory src/${sourceSetName}/aspectj and output build/generated/aspectj/${sourceSetName} 
+
 Usage
 -----
 
