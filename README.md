@@ -10,7 +10,7 @@ Made changes to the way the plugin works to avoid issues with compiling source w
 
 The plugin now weaves compiled sources which are automatically added to inPath.
 
-The aspectj source files can be placed in a virtual directory similar to the [antlr plugin](gradle/subprojects/antlr/src/main/java/org/gradle/api/plugins/antlr/AntlrPlugin.java).
+The aspectj source files can be placed in a virtual directory similar to the [antlr plugin](https://github.com/gradle/gradle/blob/70f132db842718e97b397fda49808f69d268cacb/subprojects/antlr/src/main/java/org/gradle/api/plugins/antlr/AntlrPlugin.java).
 
 The plugin created a aspectj virtual directory for all sourceSets.
 
