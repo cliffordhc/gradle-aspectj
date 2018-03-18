@@ -182,6 +182,7 @@ class Ajc extends DefaultTask {
     String xlint = 'ignore'
 
     String maxmem
+    String inxml
     Map<String, String> additionalAjcArgs
 
     Ajc() {
@@ -214,6 +215,10 @@ class Ajc extends DefaultTask {
                 iajcArgs['maxmem'] = maxmem
             }
 
+            if (null != inxml) {
+                iajcArgs['inxml'] = inxml
+            }
+            
             if (null != additionalAjcArgs) {
                 for (pair in additionalAjcArgs) {
                     iajcArgs[pair.key] = pair.value
